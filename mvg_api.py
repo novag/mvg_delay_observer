@@ -189,6 +189,7 @@ class Departure(object):
         self._departure_time = departure_time
         self._product = product
         self._label = destination
+        self._destination = destination
         self._live = live
         self._line_background_color = line_background_color
         self._departure_id = departure_id
@@ -205,6 +206,10 @@ class Departure(object):
     @property
     def label(self):
         return self._label
+
+    @property
+    def destination(self):
+        return self._destination
 
     @property
     def live(self):

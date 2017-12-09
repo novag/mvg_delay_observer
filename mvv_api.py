@@ -78,37 +78,55 @@ class MVVAPI(object):
         else:
             raise UnexpectedResponseCodeException(response.status_code)
 
-    def get_departures(self, station, limit=5):
+    def get_departures(self, station, zug=False, sbahn=False, ubahn=True, tram=False, bus=True,
+                       icbus=False, expressbus=False, limit=5):
         params = {
             'mode': 'direct',
             'useRealtime': 0,
             'name_dm': station,
             'type_dm': 'stop',
-            'limit': limit
+            'limit': limit,
+            'excludedMeans': 'checkbox'
         }
+
+        if not zug:
+            params['exclMOT_0'] = 1
+        if not sbahn:
+            params['exclMOT_1'] = 1
+        if not ubahn:
+            params['exclMOT_2'] = 1
+        if not tram:
+            params['exclMOT_4'] = 1
+        if not bus:
+            params['exclMOT_5'] = 1
+        if not icbus:
+            params['exclMOT_6'] = 1
+        if not expressbus:
+            params['exclMOT_7'] = 1
 
         response = self._authenticated_request('GET', 'XML_DM_REQUEST', params)
 
-        departures_xml = ElementTree.fromstring(response.content).find('dps').findall('dp')
-
         departures = []
-        for departure_xml in departures_xml:
-            departure = Departure()
-            for node in departure_xml:
-                if node.tag == 'n':
-                    departure._station_name = node.text
-                elif node.tag == 'st':
-                    date = '{} {}'.format(node.find('da').text, node.find('t').text)
-                    timestamp = time.mktime(datetime.strptime(date, "%Y%m%d %H%M").timetuple())
-                    departure._departure_time = int(timestamp)
-                elif node.tag == 'm':
-                    product = node.find('n').text.upper().replace('-', '')
-                    departure._product = product
-                    departure._label = node.find('nu').text
-                    departure._destination = node.find('des').text
-                elif node.tag == 'r':
-                    departure._mvv_station_id = int(node.find('id').text)
+        dps_xml = ElementTree.fromstring(response.content).find('dps')
+        if dps_xml:
+            departures_xml = dps_xml.findall('dp')
+            for departure_xml in departures_xml:
+                departure = Departure()
+                for node in departure_xml:
+                    if node.tag == 'n':
+                        departure._station_name = node.text
+                    elif node.tag == 'st':
+                        date = '{} {}'.format(node.find('da').text, node.find('t').text)
+                        timestamp = time.mktime(datetime.strptime(date, "%Y%m%d %H%M").timetuple())
+                        departure._departure_time = int(timestamp)
+                    elif node.tag == 'm':
+                        product = node.find('n').text.upper().replace('-', '')
+                        departure._product = product
+                        departure._label = node.find('nu').text
+                        departure._destination = node.find('des').text
+                    elif node.tag == 'r':
+                        departure._mvv_station_id = int(node.find('id').text)
 
-            departures.append(departure)
+                departures.append(departure)
 
         return departures
