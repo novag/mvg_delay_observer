@@ -1,9 +1,3 @@
-# =====================================================
-# Copyright (c) 2017 novag All Rights Reserved.
-# 
-# Confidential and Proprietary - novag
-# =====================================================
-
 import requests
 
 DEFAULT_BASE_URL = 'https://apps.mvg-fahrinfo.de/v10/rest/10.0/'
@@ -251,14 +245,16 @@ class MVGAPI(object):
         else:
             raise UnexpectedResponseCodeException(response.status_code)
 
-    def get_stations(self, data_hash='64bfd16917ce3fbc5585bc14e4dee26a', version=0):
+    def _get_stations(self, data_hash='64bfd16917ce3fbc5585bc14e4dee26a', version=0):
         params = {
             'hash': data_hash,
             'version': version
         }
 
-        response = self._authenticated_request(
-            'GET', 'dynamicdata/stationData', params)
+        return self._authenticated_request('GET', 'dynamicdata/stationData', params)
+
+    def get_stations(self, data_hash='64bfd16917ce3fbc5585bc14e4dee26a', version=0):
+        response = self._get_stations(data_hash, version)
 
         stations = []
         for station in response.json()['stations']:
@@ -269,9 +265,13 @@ class MVGAPI(object):
 
         return StationResponse(response.json()['hash'], response.json()['version'], stations)
 
+    def _get_zoom_data(self, station_id):
+        response = self._authenticated_request('GET', 'zoom/{}'.format(station_id))
+
+        return response
+
     def get_zoom_data(self, station_id):
-        response = self._authenticated_request(
-            'GET', 'zoom/{}'.format(station_id))
+        response = self._get_zoom_data(station_id)
 
         transport_devices = []
         for transport_device in response.json()['transportDevices']:
@@ -302,7 +302,7 @@ class MVGAPI(object):
 
         return ZoomResponse(response.json()['efaId'], response.json()['name'], transport_devices)
 
-    def get_departures(self, station_id, ubahn=True, sbahn=False, tram=False, bus=False, zug=False):
+    def _get_departures(self, station_id, ubahn=True, sbahn=False, tram=False, bus=True, zug=False):
         params = {
             'ubahn': ubahn,
             'sbahn': sbahn,
@@ -311,14 +311,39 @@ class MVGAPI(object):
             'zug': zug
         }
 
-        response = self._authenticated_request(
-            'GET', 'departure/{}'.format(station_id), params)
+        return self._authenticated_request('GET', 'departure/{}'.format(station_id), params)
+
+    def get_departures(self, station_id, ubahn=True, sbahn=False, tram=False, bus=True, zug=False, regiobus=False):
+        response = self._get_departures(station_id, ubahn, sbahn, tram, bus, zug)
 
         departures = []
         for departure in response.json()['departures']:
+            if not regiobus and departure['product'] == 'REGIONAL_BUS':
+                continue
+
             departures.append(Departure(departure['departureTime'], departure['product'],
                                         departure['label'], departure['destination'],
                                         departure['live'], departure['lineBackgroundColor'],
                                         departure['departureId'], departure['sev']))
+
+        return departures
+
+    def get_departures_list(self, station_id, ubahn=True, sbahn=False, tram=False, bus=True, zug=False, regiobus=False):
+        response = self._get_departures(station_id, ubahn, sbahn, tram, bus, zug)
+
+        departures = []
+        for departure in response.json()['departures']:
+            if not regiobus and departure['product'] == 'REGIONAL_BUS':
+                continue
+
+            departures.append((station_id,
+                               departure['destination'],
+                               departure['departureId'],
+                               departure['departureTime'],
+                               departure['product'],
+                               departure['label'],
+                               departure['live'],
+                               departure['sev'],
+                               departure['lineBackgroundColor']))
 
         return departures

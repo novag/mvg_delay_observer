@@ -1,9 +1,3 @@
-# =====================================================
-# Copyright (c) 2017 novag All Rights Reserved.
-# 
-# Confidential and Proprietary - novag
-# =====================================================
-
 import requests
 import time
 from datetime import datetime

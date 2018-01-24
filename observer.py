@@ -1,19 +1,34 @@
-# =====================================================
-# Copyright (c) 2017 novag All Rights Reserved.
-# 
-# Confidential and Proprietary - novag
-# =====================================================
-
 import argparse
+import functools
 import json
 import mvg_api
 import mvv_api
 import os
-import pymysql
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 
+
+def timeit(func):
+    @functools.wraps(func)
+    def newfunc(*args, **kwargs):
+        startTime = time.time()
+        result = func(*args, **kwargs)
+        elapsedTime = time.time() - startTime
+        if elapsedTime < 60:
+            print('{} finished in {}s'.format(func.__name__, round(elapsedTime, 2)))
+        else:
+            mins = int(elapsedTime / 60)
+            secs = round(elapsedTime % 60, 2)
+            if mins < 60:
+                print('{} finished in {}m {}s'.format(func.__name__, mins, secs))
+            else:
+                hours = int(duration / 3600)
+                mins = mins % 60
+                print('{} finished in {}h {}m {}s'.format(func.__name__, hours, mins, secs))
+
+        return result
+    return newfunc
 
 class AtomicCounter:
     def __init__(self, initial=0):
@@ -34,17 +49,18 @@ class Observer:
         self.mvgapi = mvg_api.MVGAPI()
         self.mvvapi = mvv_api.MVVAPI()
 
-    def connect(self):
-        self.connection = pymysql.connect(host=os.environ['HOST'],
-                                          user=os.environ['USER'],
-                                          password=os.environ['PASSWORD'],
-                                          db=os.environ['DB'],
-                                          charset='utf8',
-                                          cursorclass=pymysql.cursors.DictCursor)
+    def connect(self, connector): # TODO
+        self.connection = connector.connect(host=os.environ['HOST'],
+                                            user=os.environ['USER'],
+                                            password=os.environ['PASSWORD'],
+                                            db=os.environ['DB'],
+                                            charset='utf8',
+                                            cursorclass=connector.cursors.DictCursor)
 
     def disconnect(self):
         self.connection.close()
 
+    #@timeit
     def refresh_stations(self, stations=None):
         inserted = 0
         changed = 0
@@ -54,14 +70,16 @@ class Observer:
 
         with self.connection.cursor() as cursor:
             sql_insert_station = """
-                    INSERT INTO station (station_id, type, name, aliases, hasLiveData, hasZoomData, place, longitude, latitude)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-                    ON DUPLICATE KEY
-                    UPDATE station_id=%s, type=%s, name=%s, aliases=%s, hasLiveData=%s, hasZoomData=%s, place=%s, longitude=%s, latitude=%s
-                """
+                INSERT INTO station (station_id, type, name, aliases, hasLiveData, hasZoomData, place, longitude, latitude)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON DUPLICATE KEY
+                UPDATE station_id=%s, type=%s, name=%s, aliases=%s, hasLiveData=%s, hasZoomData=%s, place=%s, longitude=%s, latitude=%s
+            """
             sql_insert_station_product = """
-                INSERT IGNORE INTO station_product
+                INSERT INTO station_product
                 VALUES (%s, %s)
+                ON DUPLICATE KEY
+                UPDATE station_id=station_id
             """
 
             for station in stations:
@@ -81,6 +99,7 @@ class Observer:
 
         return inserted, changed
 
+    @timeit
     def refresh_zoom_data(self):
         inserted = 0
 
@@ -106,7 +125,7 @@ class Observer:
             stations = cursor.fetchall()
             for row in stations:
                 zoom = self.mvgapi.get_zoom_data(row['station_id'])
-                for transport_device in zoom['transport_devices']:
+                for transport_device in zoom.transport_devices:
                     cursor.execute(sql_select_device_status, (row['station_id'], transport_device.xcoordinate, transport_device.ycoordinate))
                     latest_entry = cursor.fetchone()
 
@@ -134,7 +153,6 @@ class Observer:
         print('schedule: ' + name)
 
         departures = self.mvvapi.get_departures(name, limit=30)
-        lock.acquire()
 
         sql_insert_schedule = """
             INSERT INTO schedule
@@ -147,44 +165,41 @@ class Observer:
                                       (MATCH (name) AGAINST (%s IN NATURAL LANGUAGE MODE)) DESC
                              LIMIT 1),
                     %s, %s, %s)
-            """
+        """
 
+        sql_data = []
         for departure in departures:
-            if departure.product != 'UBAHN' and departure.product != 'BUS':
+            if departure.product != 'UBAHN' and departure.product != 'BUS' and departure.product != 'STADTBUS':
                 continue
 
-            try:
-                cursor.execute(sql_insert_schedule, (station_id,
-                                                     departure.mvv_station_id,
-                                                     departure.destination,
-                                                     departure.destination,
-                                                     departure.destination,
-                                                     departure.departure_time,
-                                                     departure.product,
-                                                     departure.label))
-                if cursor.rowcount == 1:
-                    counter.increment()
-            except pymysql.err.IntegrityError as e:
-                pass
-            except Exception as e:
-                obj = {
-                    'status': 'ERROR',
-                    'module': 'schedule',
-                    'message': str(e),
-                    'departure': {
-                        'station': name,
-                        'station_id': station_id,
-                        'destination': departure.destination,
-                        'departure_time': departure.departure_time,
-                        'product': departure.product,
-                        'label': departure.label
-                    }
-                }
-                print(json.dumps(obj))
+            sql_data.append((station_id,
+                             departure.mvv_station_id,
+                             departure.destination,
+                             departure.destination,
+                             departure.destination,
+                             departure.departure_time,
+                             departure.product,
+                             departure.label))
 
-        lock.release()
+        try:
+            lock.acquire()
+            rowcount = cursor.executemany(sql_insert_schedule, sql_data)
+
+            counter.increment(rowcount)
+        except pymysql.err.IntegrityError as e:
+            pass
+        except Exception as e:
+            obj = {
+                'status': 'ERROR',
+                'module': 'schedule',
+                'message': str(e)
+            }
+            print(json.dumps(obj))
+        finally:
+            lock.release()
 
     # Every 20 minutes
+    @timeit
     def load_schedule_threaded(self):
         executor = ThreadPoolExecutor(max_workers=5)
         lock = threading.Lock()
@@ -200,7 +215,7 @@ class Observer:
             cursor.execute(sql_select_stations_with_live_data)
             stations = cursor.fetchall()
             for row in stations:
-                executor.submit(load_schedule, lock, cursor, inserted, row['station_id'], row['name'])
+                executor.submit(self.load_schedule, lock, cursor, inserted, row['station_id'], row['name'])
 
             executor.shutdown(wait=True)
 
@@ -208,11 +223,10 @@ class Observer:
 
         return inserted.value
 
-    def load_depature(self, lock, cursor, counter, station_id, name):
+    def load_departures(self, lock, cursor, counter, station_id, name):
         print('departure: ' + name)
 
-        departures = self.mvgapi.get_departures(station_id)
-        lock.acquire()
+        departures = self.mvgapi.get_departures_list(station_id)
 
         sql_insert_departure = """
             INSERT INTO departure
@@ -220,48 +234,27 @@ class Observer:
                          FROM station
                          WHERE name = %s
                          LIMIT 1),
-                    %s, %s, %s, %s, %s, %s)
+                    %s, %s, %s, %s, %s, %s, %s)
         """
+        try:
+            lock.acquire()
+            rowcount = cursor.executemany(sql_insert_departure, departures)
 
-        for departure in departures:
-            if departure.product != 'UBAHN' and departure.product != 'BUS':
-                continue
+            counter.increment(rowcount)
+        except pymysql.err.IntegrityError as e:
+            pass
+        except Exception as e:
+            obj = {
+                'status': 'ERROR',
+                'module': 'departure',
+                'message': str(e)
+            }
+            print(json.dumps(obj))
+        finally:
+            lock.release()
 
-            try:
-                cursor.execute(sql_insert_departure, (station_id,
-                                                      departure.destination,
-                                                      departure.departure_time,
-                                                      departure.product,
-                                                      departure.label,
-                                                      departure.live,
-                                                      departure.sev,
-                                                      departure.line_background_color))
-                if cursor.rowcount == 1:
-                    counter.increment()
-            except pymysql.err.IntegrityError as e:
-                pass
-            except Exception as e:
-                obj = {
-                    'status': 'ERROR',
-                    'module': 'departure',
-                    'message': str(e),
-                    'departure': {
-                        'station': name,
-                        'station_id': station_id,
-                        'destination': departure.destination,
-                        'departure_time': departure.departure_time,
-                        'product': departure.product,
-                        'label': departure.label,
-                        'live': departure.live,
-                        'sev': departure.sev,
-                        'lineBackgroundColor': departure.line_background_color
-                    }
-                }
-                print(json.dumps(obj))
-
-        lock.release()
-
-        # Every 5 minutes
+    # Every 5 minutes
+    @timeit
     def load_departures_threaded(self):
         executor = ThreadPoolExecutor(max_workers=5)
         lock = threading.Lock()
@@ -277,7 +270,7 @@ class Observer:
             cursor.execute(sql_select_stations_with_live_data)
             stations = cursor.fetchall()
             for row in stations:
-                executor.submit(load_depature, lock, cursor, inserted, row['station_id'], row['name'])
+                executor.submit(self.load_departures, lock, cursor, inserted, row['station_id'], row['name'])
 
             executor.shutdown(wait=True)
 
@@ -287,6 +280,7 @@ class Observer:
 
 def main():
     parser = argparse.ArgumentParser()
+    parser.add_argument('-c', '--connector', dest='connector', default='pymysql')
     group = parser.add_mutually_exclusive_group()
     group.add_argument('-t', '--refresh-stations', dest='refresh_stations', action='store_true')
     group.add_argument('-z', '--refresh-zoom', dest='refresh_zoom', action='store_true')
@@ -295,25 +289,29 @@ def main():
     args = parser.parse_args()
 
     observer = Observer()
-    observer.connect()
+    if args.connector == 'pymysql':
+        import pymysql
+        observer.connect(pymysql)
+    else:
+        print('Unknown connector specified.')
+        return
 
     if args.refresh_stations:
         print('Refreshing stations...')
         inserted, changed = observer.refresh_stations()
-        print('stations inserted: ' + str(inserted))
-        print('stations changed: ' + str(changed))
+        print('Stations inserted: ' + str(inserted) + ', changed: ' + str(changed))
     elif args.refresh_zoom:
         print('Refreshing zoom data...')
         inserted = observer.refresh_zoom_data()
-        print('zoom devices inserted: ' + str(inserted))
+        print('Zoom devices inserted: ' + str(inserted))
     elif args.refresh_schedule:
         print('Loading schedule...')
         inserted = observer.load_schedule_threaded()
-        print('schedule items inserted: ' + str(inserted))
+        print('Schedule items inserted: ' + str(inserted))
     elif args.refresh_departures:
         print('Loading departures...')
         inserted = observer.load_departures_threaded()
-        print('departure items inserted: ' + str(inserted))
+        print('Departure items inserted: ' + str(inserted))
 
     observer.disconnect()
 
