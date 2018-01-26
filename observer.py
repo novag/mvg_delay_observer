@@ -1,12 +1,39 @@
 import argparse
 import functools
 import json
+import logging
 import mvg_api
 import mvv_api
 import os
+import sys
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
+
+
+class LessThanFilter(logging.Filter):
+    def __init__(self, exclusive_maximum, name=''):
+        super(LessThanFilter, self).__init__(name)
+        self.max_level = exclusive_maximum
+
+    def filter(self, record):
+        return 1 if record.levelno < self.max_level else 0
+
+logger = logging.getLogger("observer")
+logger.setLevel(logging.DEBUG)
+
+formatter = logging.Formatter('%(asctime)s:%(levelname)s %(message)s')
+
+logging_handler_out = logging.StreamHandler(sys.stdout)
+logging_handler_out.setLevel(logging.DEBUG)
+logging_handler_out.addFilter(LessThanFilter(logging.WARNING))
+logging_handler_out.setFormatter(formatter)
+logger.addHandler(logging_handler_out)
+
+logging_handler_err = logging.StreamHandler(sys.stderr)
+logging_handler_err.setLevel(logging.WARNING)
+logging_handler_out.setFormatter(formatter)
+logger.addHandler(logging_handler_err)
 
 
 def timeit(func):
@@ -16,16 +43,16 @@ def timeit(func):
         result = func(*args, **kwargs)
         elapsedTime = time.time() - startTime
         if elapsedTime < 60:
-            print('{} finished in {}s'.format(func.__name__, round(elapsedTime, 2)))
+            logger.debug('{} finished in {}s'.format(func.__name__, round(elapsedTime, 2)))
         else:
             mins = int(elapsedTime / 60)
             secs = round(elapsedTime % 60, 2)
             if mins < 60:
-                print('{} finished in {}m {}s'.format(func.__name__, mins, secs))
+                logger.debug('{} finished in {}m {}s'.format(func.__name__, mins, secs))
             else:
                 hours = int(duration / 3600)
                 mins = mins % 60
-                print('{} finished in {}h {}m {}s'.format(func.__name__, hours, mins, secs))
+                logger.debug('{} finished in {}h {}m {}s'.format(func.__name__, hours, mins, secs))
 
         return result
     return newfunc
@@ -221,7 +248,7 @@ class Observer:
         return inserted
 
     def load_schedule(self, lock, cursor, counter, station_id, name):
-        print('schedule: ' + name)
+        logger.debug('schedule: ' + name)
 
         departures = self.mvvapi.get_departures(name, limit=30)
 
@@ -265,7 +292,7 @@ class Observer:
                 'module': 'schedule',
                 'message': str(e)
             }
-            print(json.dumps(obj))
+            logger.error(json.dumps(obj))
         finally:
             lock.release()
 
@@ -295,7 +322,7 @@ class Observer:
         return inserted.value
 
     def load_departures(self, lock, cursor, counter, station_id, name):
-        print('departure: ' + name)
+        logger.debug('departure: ' + name)
 
         departures = self.mvgapi.get_departures_list(station_id)
 
@@ -320,7 +347,7 @@ class Observer:
                 'module': 'departure',
                 'message': str(e)
             }
-            print(json.dumps(obj))
+            logger.error(json.dumps(obj))
         finally:
             lock.release()
 
@@ -366,35 +393,36 @@ def main():
         import pymysql
         observer.connect(pymysql)
     else:
-        print('Unknown connector specified.')
+        logger.error('Unknown connector specified.')
         return
 
-    if args.departures:
-        print('Loading departures...')
-        inserted = observer.load_departures_threaded()
-        print('Departure items inserted: ' + str(inserted))
-    elif args.lines:
-        print('Refreshing lines...')
-        inserted, changed = observer.refresh_lines()
-        print('Lines inserted: ' + str(inserted) + ', changed: ' + str(changed))
-    elif args.messages:
-        print('Refreshing messages...')
-        inserted = observer.refresh_messages()
-        print('Messages inserted: ' + str(inserted))
-    elif args.stations:
-        print('Refreshing stations...')
-        inserted, changed = observer.refresh_stations()
-        print('Stations inserted: ' + str(inserted) + ', changed: ' + str(changed))
-    elif args.schedule:
-        print('Loading schedule...')
-        inserted = observer.load_schedule_threaded()
-        print('Schedule items inserted: ' + str(inserted))
-    elif args.zoom:
-        print('Refreshing zoom data...')
-        inserted = observer.refresh_zoom_data()
-        print('Zoom devices inserted: ' + str(inserted))
-
-    observer.disconnect()
+    try:
+        if args.departures:
+            logger.debug('Loading departures...')
+            inserted = observer.load_departures_threaded()
+            logger.debug('Departure items inserted: ' + str(inserted))
+        elif args.lines:
+            logger.debug('Refreshing lines...')
+            inserted, changed = observer.refresh_lines()
+            logger.debug('Lines inserted: ' + str(inserted) + ', changed: ' + str(changed))
+        elif args.messages:
+            logger.debug('Refreshing messages...')
+            inserted = observer.refresh_messages()
+            logger.debug('Messages inserted: ' + str(inserted))
+        elif args.stations:
+            logger.debug('Refreshing stations...')
+            inserted, changed = observer.refresh_stations()
+            logger.debug('Stations inserted: ' + str(inserted) + ', changed: ' + str(changed))
+        elif args.schedule:
+            logger.debug('Loading schedule...')
+            inserted = observer.load_schedule_threaded()
+            logger.debug('Schedule items inserted: ' + str(inserted))
+        elif args.zoom:
+            logger.debug('Refreshing zoom data...')
+            inserted = observer.refresh_zoom_data()
+            logger.debug('Zoom devices inserted: ' + str(inserted))
+    finally:
+        observer.disconnect()
 
 if __name__ == "__main__":
     main()
