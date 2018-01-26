@@ -95,6 +95,101 @@ class StationResponse(object):
         return self._stations
 
 
+class Line(object):
+
+    def __init__(self, diva_id, line_number, product, sev, destination=None, partial_net=None):
+        self._diva_id = diva_id
+        self._line_number = line_number
+        self._product = product
+        self._sev = sev
+        self._destination = destination
+        self._partial_net = partial_net
+
+    @property
+    def diva_id(self):
+        return self._diva_id
+
+    @property
+    def line_number(self):
+        return self._line_number
+
+    @property
+    def product(self):
+        return self._product
+
+    @property
+    def sev(self):
+        return self._sev
+
+    @property
+    def destination(self):
+        return self._destination
+
+    @property
+    def partial_net(self):
+        return self._partial_net
+
+
+class Message(object):
+
+    def __init__(self, id, type, lines, title, description, publication, valid_from, valid_to=None):
+        self._id = id
+        self._type = type
+        self._lines = lines
+        self._title = title
+        self._description = description
+        self._publication = publication
+        self._valid_from = valid_from
+        self._valid_to = valid_to
+
+    @property
+    def id(self):
+        return self._id
+
+    @property
+    def type(self):
+        return self._type
+
+    @property
+    def lines(self):
+        return self._lines
+
+    @property
+    def title(self):
+        return self._title
+
+    @property
+    def description(self):
+        return self._description
+
+    @property
+    def publication(self):
+        return self._publication
+
+    @property
+    def valid_from(self):
+        return self._valid_from
+
+    @property
+    def valid_to(self):
+        return self._valid_to
+
+
+class MessagesResponse(object):
+
+    def __init__(self, status, messages):
+        self._status = status
+        self._messages = messages
+
+    @property
+    def status(self):
+        return self._status
+
+    @property
+    def messages(self):
+        return self._messages
+
+
 class TransportDevice(object):
 
     def __init__(self, status, name, identifier, xcoordinate, ycoordinate, description, type,
@@ -255,15 +350,77 @@ class MVGAPI(object):
 
     def get_stations(self, data_hash='64bfd16917ce3fbc5585bc14e4dee26a', version=0):
         response = self._get_stations(data_hash, version)
+        data = response.json()
 
         stations = []
-        for station in response.json()['stations']:
+        for station in data['stations']:
             stations.append(Station(station['type'], station['latitude'], station['longitude'],
                                     station['id'], station['place'], station['name'],
                                     station['hasLiveData'], station['hasZoomData'],
                                     station['products'], station['aliases']))
 
-        return StationResponse(response.json()['hash'], response.json()['version'], stations)
+        return StationResponse(data['hash'], data['version'], stations)
+
+    def _get_lines(self):
+        return self._authenticated_request('GET', 'dynamicdata/lines')
+
+    def get_lines(self):
+        response = self._get_lines()
+        data = response.json()
+
+        lines = []
+        for raw_line in data:
+            line = Line(raw_line['divaId'], raw_line['lineNumber'], raw_line['product'], raw_line['sev'])
+            if 'partialNet' in raw_line:
+                line._partial_net = raw_line['partialNet']
+
+            lines.append(line)
+
+        return lines
+
+    def _get_messages(self):
+        return self._authenticated_request('GET', 'messages')
+
+    def get_messages(self, ubahn=True, sbahn=False, tram=False, bus=True, regiobus=False):
+        response = self._get_messages()
+        data = response.json()
+
+        messages = []
+        for raw_message in data['messages']:
+            match = False
+            lines = []
+            for raw_line in raw_message['lines']:
+                line = Line(raw_line['divaId'], raw_line['lineNumber'], raw_line['product'], raw_line['sev'])
+                if 'destination' in raw_line:
+                    line._destination = raw_line['destination']
+                if 'partialNet' in raw_line:
+                    line._partial_net = raw_line['partialNet']
+
+                lines.append(line)
+
+                product = line.product
+                if ubahn and product == 'UBAHN':
+                    match = True
+                elif sbahn and product == 'SBAHN':
+                    match = True
+                elif tram and product == 'TRAM':
+                    match = True
+                elif bus and product == 'BUS':
+                    match = True
+                elif regiobus and product == 'REGIONAL_BUS':
+                    match = True
+
+            if not match:
+                continue
+
+
+            message = Message(raw_message['id'], raw_message['type'], lines, raw_message['title'], raw_message['description'], raw_message['publication'], raw_message['validFrom'])
+            if 'validTo' in raw_message:
+                message._valid_to = raw_message['validTo']
+
+            messages.append(message)
+
+        return MessagesResponse(data['status'], messages)
 
     def _get_zoom_data(self, station_id):
         response = self._authenticated_request('GET', 'zoom/{}'.format(station_id))
@@ -272,9 +429,10 @@ class MVGAPI(object):
 
     def get_zoom_data(self, station_id):
         response = self._get_zoom_data(station_id)
+        data = response.json()
 
         transport_devices = []
-        for transport_device in response.json()['transportDevices']:
+        for transport_device in data['transportDevices']:
             if 'lastUpdate' not in transport_device:
                 transport_device['lastUpdate'] = -1
 
@@ -300,7 +458,7 @@ class MVGAPI(object):
                                                          transport_device['type'],
                                                          transport_device['lastUpdate']))
 
-        return ZoomResponse(response.json()['efaId'], response.json()['name'], transport_devices)
+        return ZoomResponse(data['efaId'], data['name'], transport_devices)
 
     def _get_departures(self, station_id, ubahn=True, sbahn=False, tram=False, bus=True, zug=False):
         params = {
@@ -315,9 +473,10 @@ class MVGAPI(object):
 
     def get_departures(self, station_id, ubahn=True, sbahn=False, tram=False, bus=True, zug=False, regiobus=False):
         response = self._get_departures(station_id, ubahn, sbahn, tram, bus, zug)
+        data = response.json()
 
         departures = []
-        for departure in response.json()['departures']:
+        for departure in data['departures']:
             if not regiobus and departure['product'] == 'REGIONAL_BUS':
                 continue
 
@@ -330,9 +489,10 @@ class MVGAPI(object):
 
     def get_departures_list(self, station_id, ubahn=True, sbahn=False, tram=False, bus=True, zug=False, regiobus=False):
         response = self._get_departures(station_id, ubahn, sbahn, tram, bus, zug)
+        data = response.json()
 
         departures = []
-        for departure in response.json()['departures']:
+        for departure in data['departures']:
             if not regiobus and departure['product'] == 'REGIONAL_BUS':
                 continue
 

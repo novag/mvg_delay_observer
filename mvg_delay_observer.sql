@@ -18,11 +18,11 @@ CREATE TABLE `departure` (
   `destination_id` int(11) NOT NULL,
   `departure_id` int(11) NOT NULL,
   `departure_time` bigint(20) NOT NULL,
-  `product` varchar(8) NOT NULL,
+  `product` varchar(16) NOT NULL,
   `label` varchar(64) NOT NULL,
   `live` tinyint(1) NOT NULL,
   `sev` tinyint(1) NOT NULL,
-  `lineBackgroundColor` varchar(15) NOT NULL
+  `lineBackgroundColor` varchar(16) NOT NULL
 );
 
 -- --------------------------------------------------------
@@ -36,8 +36,23 @@ CREATE TABLE `schedule` (
   `mvv_station_id` int(11) NOT NULL,
   `destination_id` int(11) NOT NULL,
   `departure_time` bigint(20) NOT NULL,
-  `product` varchar(8) NOT NULL,
+  `product` varchar(16) NOT NULL,
   `label` varchar(8) NOT NULL
+);
+
+-- --------------------------------------------------------
+
+--
+-- Tabellenstruktur für Tabelle `line`
+--
+
+CREATE TABLE `line` (
+  `id` int(11) NOT NULL,
+  `divaId` varchar(8) NOT NULL,
+  `lineNumber` varchar(32) NOT NULL,
+  `product` varchar(16) NOT NULL,
+  `partialNet` varchar(32) DEFAULT NULL,
+  `sev` tinyint(1) NOT NULL
 );
 
 -- --------------------------------------------------------
@@ -49,7 +64,7 @@ CREATE TABLE `schedule` (
 CREATE TABLE `station` (
   `id` int(11) NOT NULL,
   `station_id` int(11) NOT NULL,
-  `type` varchar(30) NOT NULL,
+  `type` varchar(32) NOT NULL,
   `name` varchar(64) NOT NULL,
   `aliases` varchar(255) DEFAULT NULL,
   `hasLiveData` tinyint(1) NOT NULL,
@@ -67,7 +82,36 @@ CREATE TABLE `station` (
 
 CREATE TABLE `station_product` (
   `station_id` int(11) NOT NULL,
-  `product` varchar(8) NOT NULL
+  `product` varchar(16) NOT NULL
+);
+
+-- --------------------------------------------------------
+
+--
+-- Tabellenstruktur für Tabelle `message`
+--
+
+CREATE TABLE `message` (
+  `id` int(11) NOT NULL,
+  `message_id` int(11) NOT NULL,
+  `type` varchar(32) NOT NULL,
+  `title` varchar(255) NOT NULL,
+  `description` text NOT NULL,
+  `publication` bigint(20) NOT NULL,
+  `validFrom` bigint(20) NOT NULL,
+  `validTo` bigint(20) DEFAULT NULL
+);
+
+-- --------------------------------------------------------
+
+--
+-- Tabellenstruktur für Tabelle `message_line`
+--
+
+CREATE TABLE `message_line` (
+  `message_id` int(11) NOT NULL,
+  `line_id` int(11) NOT NULL,
+  `destination_id` int(11) DEFAULT NULL
 );
 
 -- --------------------------------------------------------
@@ -111,6 +155,13 @@ ALTER TABLE `schedule`
   ADD KEY `destination_id` (`destination_id`);
 
 --
+-- Indizes für die Tabelle `line`
+--
+ALTER TABLE `line`
+  ADD PRIMARY KEY (`id`),
+  ADD UNIQUE KEY `lineNumber` (`lineNumber`);
+
+--
 -- Indizes für die Tabelle `station`
 --
 ALTER TABLE `station`
@@ -122,7 +173,20 @@ ALTER TABLE `station` ADD FULLTEXT KEY `name` (`name`);
 -- Indizes für die Tabelle `station_product`
 --
 ALTER TABLE `station_product`
-  ADD UNIQUE KEY `common_key` (`station_id`,`product`) USING BTREE;
+  ADD UNIQUE KEY `station_product_key` (`station_id`,`product`) USING BTREE;
+
+--
+-- Indizes für die Tabelle `message`
+--
+ALTER TABLE `message`
+  ADD PRIMARY KEY (`id`),
+  ADD UNIQUE KEY `message_id` (`message_id`);
+
+--
+-- Indizes für die Tabelle `message_line`
+--
+ALTER TABLE `message_line`
+  ADD UNIQUE KEY `message_line_key` (`message_id`,`line_id`,`destination_id`) USING BTREE;
 
 --
 -- Indizes für die Tabelle `transport_device`
@@ -136,9 +200,21 @@ ALTER TABLE `transport_device`
 --
 
 --
+-- AUTO_INCREMENT für Tabelle `line`
+--
+ALTER TABLE `line`
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT;
+
+--
 -- AUTO_INCREMENT für Tabelle `station`
 --
 ALTER TABLE `station`
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT;
+
+--
+-- AUTO_INCREMENT für Tabelle `message`
+--
+ALTER TABLE `message`
   MODIFY `id` int(11) NOT NULL AUTO_INCREMENT;
 
 --
@@ -170,6 +246,14 @@ ALTER TABLE `schedule`
 --
 ALTER TABLE `station_product`
   ADD CONSTRAINT `station_product_ibfk_1` FOREIGN KEY (`station_id`) REFERENCES `station` (`station_id`);
+
+--
+-- Constraints der Tabelle `station_product`
+--
+ALTER TABLE `message_line`
+  ADD CONSTRAINT `message_line_ibfk_1` FOREIGN KEY (`message_id`) REFERENCES `message` (`id`),
+  ADD CONSTRAINT `message_line_ibfk_2` FOREIGN KEY (`line_id`) REFERENCES `line` (`id`),
+  ADD CONSTRAINT `message_line_ibfk_3` FOREIGN KEY (`destination_id`) REFERENCES `station` (`station_id`);
 
 --
 -- Constraints der Tabelle `transport_device`

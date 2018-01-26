@@ -60,7 +60,7 @@ class Observer:
     def disconnect(self):
         self.connection.close()
 
-    #@timeit
+    @timeit
     def refresh_stations(self, stations=None):
         inserted = 0
         changed = 0
@@ -98,6 +98,77 @@ class Observer:
         self.connection.commit()
 
         return inserted, changed
+
+    @timeit
+    def refresh_lines(self):
+        inserted = 0
+        changed = 0
+
+        lines = self.mvgapi.get_lines()
+
+        with self.connection.cursor() as cursor:
+            sql_insert_line = """
+                INSERT INTO line (divaId, lineNumber, product, partialNet, sev)
+                VALUES (%s, %s, %s, %s, %s)
+                ON DUPLICATE KEY
+                UPDATE divaId=%s, lineNumber=%s, product=%s, partialNet=%s, sev=%s
+            """
+
+            for line in lines:
+                cursor.execute(sql_insert_line,
+                               (line.diva_id, line.line_number, line.product, line.partial_net, line.sev,
+                                line.diva_id, line.line_number, line.product, line.partial_net, line.sev))
+                if cursor.rowcount == 1:
+                    inserted += 1
+                elif cursor.rowcount == 2:
+                    changed += 1
+
+        self.connection.commit()
+
+        return inserted, changed
+
+    @timeit
+    def refresh_messages(self):
+        inserted = 0
+
+        messages = self.mvgapi.get_messages().messages
+
+        with self.connection.cursor() as cursor:
+            sql_insert_message = """
+                INSERT INTO message (message_id, type, title, description, publication, validFrom, validTo)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                ON DUPLICATE KEY
+                UPDATE id=LAST_INSERT_ID(id)
+            """
+            sql_insert_message_line = """
+                INSERT INTO message_line (message_id, line_id, destination_id)
+                VALUES (%s, (SELECT id
+                             FROM line
+                             WHERE lineNumber = %s
+                             LIMIT 1),
+                        (SELECT station_id
+                         FROM station
+                         WHERE name = %s
+                         LIMIT 1))
+                ON DUPLICATE KEY
+                UPDATE message_id=message_id
+            """
+
+            for message in messages:
+                cursor.execute(sql_insert_message,
+                               (message.id, message.type, message.title, message.description, message.publication, message.valid_from, message.valid_to))
+
+                if cursor.rowcount == 1:
+                    inserted += 1
+
+                message_id = cursor.lastrowid
+                for line in message.lines:
+                    cursor.execute(sql_insert_message_line,
+                                   (message_id, line.line_number, line.destination))
+
+        self.connection.commit()
+
+        return inserted
 
     @timeit
     def refresh_zoom_data(self):
@@ -282,10 +353,12 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('-c', '--connector', dest='connector', default='pymysql')
     group = parser.add_mutually_exclusive_group()
-    group.add_argument('-t', '--refresh-stations', dest='refresh_stations', action='store_true')
-    group.add_argument('-z', '--refresh-zoom', dest='refresh_zoom', action='store_true')
-    group.add_argument('-s', '--refresh-schedule', dest='refresh_schedule', action='store_true')
-    group.add_argument('-d', '--refresh-departures', dest='refresh_departures', action='store_true')
+    group.add_argument('-d', '--departures', dest='departures', action='store_true')
+    group.add_argument('-l', '--lines', dest='lines', action='store_true')
+    group.add_argument('-m', '--messages', dest='messages', action='store_true')
+    group.add_argument('-s', '--schedule', dest='schedule', action='store_true')
+    group.add_argument('-t', '--stations', dest='stations', action='store_true')
+    group.add_argument('-z', '--zoom', dest='zoom', action='store_true')
     args = parser.parse_args()
 
     observer = Observer()
@@ -296,22 +369,30 @@ def main():
         print('Unknown connector specified.')
         return
 
-    if args.refresh_stations:
-        print('Refreshing stations...')
-        inserted, changed = observer.refresh_stations()
-        print('Stations inserted: ' + str(inserted) + ', changed: ' + str(changed))
-    elif args.refresh_zoom:
-        print('Refreshing zoom data...')
-        inserted = observer.refresh_zoom_data()
-        print('Zoom devices inserted: ' + str(inserted))
-    elif args.refresh_schedule:
-        print('Loading schedule...')
-        inserted = observer.load_schedule_threaded()
-        print('Schedule items inserted: ' + str(inserted))
-    elif args.refresh_departures:
+    if args.departures:
         print('Loading departures...')
         inserted = observer.load_departures_threaded()
         print('Departure items inserted: ' + str(inserted))
+    elif args.lines:
+        print('Refreshing lines...')
+        inserted, changed = observer.refresh_lines()
+        print('Lines inserted: ' + str(inserted) + ', changed: ' + str(changed))
+    elif args.messages:
+        print('Refreshing messages...')
+        inserted = observer.refresh_messages()
+        print('Messages inserted: ' + str(inserted))
+    elif args.stations:
+        print('Refreshing stations...')
+        inserted, changed = observer.refresh_stations()
+        print('Stations inserted: ' + str(inserted) + ', changed: ' + str(changed))
+    elif args.schedule:
+        print('Loading schedule...')
+        inserted = observer.load_schedule_threaded()
+        print('Schedule items inserted: ' + str(inserted))
+    elif args.zoom:
+        print('Refreshing zoom data...')
+        inserted = observer.refresh_zoom_data()
+        print('Zoom devices inserted: ' + str(inserted))
 
     observer.disconnect()
 
