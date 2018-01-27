@@ -193,7 +193,7 @@ ALTER TABLE `message_line`
 --
 ALTER TABLE `transport_device`
   ADD PRIMARY KEY (`id`),
-  ADD UNIQUE KEY `search_key` (`station_id`,`xcoordinate`,`ycoordinate`) USING BTREE;
+  ADD UNIQUE KEY `search_key` (`station_id`, `xcoordinate`,`ycoordinate`, `timestamp`) USING BTREE;
 
 --
 -- AUTO_INCREMENT für exportierte Tabellen
