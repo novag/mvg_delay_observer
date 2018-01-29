@@ -262,7 +262,7 @@ class Observer:
                                        END) DESC,
                                       (MATCH (name) AGAINST (%s IN NATURAL LANGUAGE MODE)) DESC
                              LIMIT 1),
-                    %s, %s, %s)
+                    %s, %s, %s, %s)
         """
 
         sql_data = []
@@ -276,6 +276,7 @@ class Observer:
                              departure.destination,
                              departure.destination,
                              departure.departure_time,
+                             departure.destination,
                              departure.product,
                              departure.label))
 
