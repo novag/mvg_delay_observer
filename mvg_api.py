@@ -97,7 +97,7 @@ class StationResponse(object):
 
 class Line(object):
 
-    def __init__(self, diva_id, line_number, product, sev, destination=None, partial_net=None):
+    def __init__(self, line_number, product, sev, diva_id=None, destination=None, partial_net=None):
         self._diva_id = diva_id
         self._line_number = line_number
         self._product = product
@@ -395,6 +395,8 @@ class MVGAPI(object):
                     line._destination = raw_line['destination']
                 if 'partialNet' in raw_line:
                     line._partial_net = raw_line['partialNet']
+                if 'divaId' in raw_line:
+                    line._diva_id = raw_line['divaId']
 
                 lines.append(line)
 
