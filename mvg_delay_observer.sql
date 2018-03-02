@@ -36,7 +36,6 @@ CREATE TABLE `schedule` (
   `mvv_station_id` int(11) NOT NULL,
   `destination_id` int(11) NOT NULL,
   `departure_time` bigint(20) NOT NULL,
-  `destination` varchar(64) NOT NULL,
   `product` varchar(16) NOT NULL,
   `label` varchar(8) NOT NULL
 );
